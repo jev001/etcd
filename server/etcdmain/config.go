@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Every change should be reflected on help.go as well.
-
+// etcd 配置config
 package etcdmain
 
 import (
@@ -38,6 +38,7 @@ var (
 	proxyFlagReadonly = "readonly"
 	proxyFlagOn       = "on"
 
+	// 错误回滚flag
 	fallbackFlagExit  = "exit"
 	fallbackFlagProxy = "proxy"
 
@@ -103,6 +104,7 @@ func newConfig() *config {
 		},
 		ignored: ignored,
 	}
+	// config flag
 	cfg.cf = configFlags{
 		flagSet: flag.NewFlagSet("etcd", flag.ContinueOnError),
 		clusterState: flags.NewSelectiveStringValue(
@@ -125,6 +127,7 @@ func newConfig() *config {
 		fmt.Fprintln(os.Stderr, usageline)
 	}
 
+	// 读取文件参数
 	fs.StringVar(&cfg.configFile, "config-file", "", "Path to the server configuration file. Note that if a configuration file is provided, other command line flags and environment variables will be ignored.")
 
 	// member
@@ -294,10 +297,12 @@ func (cfg *config) parse(arguments []string) error {
 	// This env variable must be parsed separately
 	// because we need to determine whether to use or
 	// ignore the env variables based on if the config file is set.
+	// 如果文件路径是空的, 那么尝试送环境变量中获取文件路径 ETCD_config-file
 	if cfg.configFile == "" {
 		cfg.configFile = os.Getenv(flags.FlagToEnv("ETCD", "config-file"))
 	}
 
+	// 存在配置文件的基础上. 将文件的内容获取到
 	if cfg.configFile != "" {
 		err = cfg.configFromFile(cfg.configFile)
 		if lg := cfg.ec.GetLogger(); lg != nil {

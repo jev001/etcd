@@ -28,6 +28,8 @@ func Main(args []string) {
 	if len(args) > 1 {
 		cmd := args[1]
 		switch cmd {
+		// 查看命令行是否 包含 gateway 或者 grpc-proxy 如果有的话 需要测试一下能否执行 rootCmd
+		// 如果有权限等去执行 那么就下一步 目前 rootCmd 依赖 cobra.Command
 		case "gateway", "grpc-proxy":
 			if err := rootCmd.Execute(); err != nil {
 				fmt.Fprint(os.Stderr, err)
@@ -37,6 +39,7 @@ func Main(args []string) {
 		}
 	}
 
+	// 启动etcd
 	startEtcdOrProxyV2(args)
 }
 

@@ -50,12 +50,17 @@ var (
 )
 
 func startEtcdOrProxyV2(args []string) {
+	// grpc 默认关闭 请求track
 	grpc.EnableTracing = false
 
+	// 创建默认设置
 	cfg := newConfig()
+	// 初始化集群设置
 	defaultInitialCluster := cfg.ec.InitialCluster
 
+	// 开始初始化/格式化 配置,从第一个参数开始
 	err := cfg.parse(args[1:])
+	// 日志配置
 	lg := cfg.ec.GetLogger()
 	if lg == nil {
 		var zapError error
@@ -76,6 +81,7 @@ func startEtcdOrProxyV2(args []string) {
 		os.Exit(1)
 	}
 
+	// 定义一个 延迟方法. 用于同步/刷新日志
 	defer func() {
 		logger := cfg.ec.GetLogger()
 		if logger != nil {
@@ -83,6 +89,7 @@ func startEtcdOrProxyV2(args []string) {
 		}
 	}()
 
+	// 更新默认的集群节点---> 需要使用到embed 模块
 	defaultHost, dhErr := (&cfg.ec).UpdateDefaultClusterFromName(defaultInitialCluster)
 	if defaultHost != "" {
 		lg.Info(
@@ -102,10 +109,14 @@ func startEtcdOrProxyV2(args []string) {
 		)
 	}
 
+	// 接收关闭信息的通道
 	var stopped <-chan struct{}
+	// 接收错误信息的通道
 	var errc <-chan error
 
+	// 文件目录是否有权限读取 权限数据怎么样
 	which := identifyDataDirOrDie(cfg.ec.GetLogger(), cfg.ec.Dir)
+	// which不为空 的情况 需要
 	if which != dirEmpty {
 		lg.Info(
 			"server has been already initialized",
@@ -113,39 +124,53 @@ func startEtcdOrProxyV2(args []string) {
 			zap.String("dir-type", string(which)),
 		)
 		switch which {
+		// 目录成员
 		case dirMember:
+			// 开启一个etcd
 			stopped, errc, err = startEtcd(&cfg.ec)
 		case dirProxy:
+			// 代理目录
+			// 开启一个 proxy
 			err = startProxy(cfg)
 		default:
+			// 抛出异常
 			lg.Panic(
 				"unknown directory type",
 				zap.String("dir-type", string(which)),
 			)
 		}
 	} else {
+		// 查看是否是 代理连接
 		shouldProxy := cfg.isProxy()
+		// 不是代理连接
 		if !shouldProxy {
+			// 是否可以startEtcd?
 			stopped, errc, err = startEtcd(&cfg.ec)
+			// 将v2监控错误的集群信息
 			if derr, ok := err.(*etcdserver.DiscoveryError); ok && derr.Err == v2discovery.ErrFullCluster {
+				// 如果启动发生错误 自动转向 代理模式
 				if cfg.shouldFallbackToProxy() {
 					lg.Warn(
 						"discovery cluster is full, falling back to proxy",
 						zap.String("fallback-proxy", fallbackFlagProxy),
 						zap.Error(err),
 					)
+					//
 					shouldProxy = true
 				}
 			} else if err != nil {
 				lg.Warn("failed to start etcd", zap.Error(err))
 			}
 		}
+		// 启动代理模式
 		if shouldProxy {
 			err = startProxy(cfg)
 		}
 	}
 
+	// etcd 或者 proxy 是否启动失败
 	if err != nil {
+		// 启动 错误信息格式化
 		if derr, ok := err.(*etcdserver.DiscoveryError); ok {
 			switch derr.Err {
 			case v2discovery.ErrDuplicateID:
@@ -198,6 +223,7 @@ func startEtcdOrProxyV2(args []string) {
 		lg.Fatal("discovery failed", zap.Error(err))
 	}
 
+	// IO中断处理? lg 记录日志
 	osutil.HandleInterrupts(lg)
 
 	// At this point, the initialization of etcd is done.
@@ -205,8 +231,11 @@ func startEtcdOrProxyV2(args []string) {
 	// for accepting connections. The etcd instance should be
 	// joined with the cluster and ready to serve incoming
 	// connections.
+
+	// 挂载后台进程管理
 	notifySystemd(lg)
 
+	// 如果发生错误. 那么记录错误信息 并且发送关闭信号
 	select {
 	case lerr := <-errc:
 		// fatal out on listener errors
@@ -214,15 +243,19 @@ func startEtcdOrProxyV2(args []string) {
 	case <-stopped:
 	}
 
+	// 关闭IO
 	osutil.Exit(0)
 }
 
+// 启动 etcd 服务
 // startEtcd runs StartEtcd in addition to hooks needed for standalone etcd.
 func startEtcd(cfg *embed.Config) (<-chan struct{}, <-chan error, error) {
+	// 嵌入模式启动---->
 	e, err := embed.StartEtcd(cfg)
 	if err != nil {
 		return nil, nil, err
 	}
+	// 注册一个 中断处理. 关闭的时候
 	osutil.RegisterInterruptHandler(e.Close)
 	select {
 	case <-e.Server.ReadyNotify(): // wait for e.Server to join the cluster
