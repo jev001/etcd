@@ -724,12 +724,19 @@ func (s *EtcdServer) adjustTicks() {
 // begin serving requests. It must be called before Do or Process.
 // Start must be non-blocking; any long-running server functionality
 // should be implemented in goroutines.
+// etcd etcd服务端启动
 func (s *EtcdServer) Start() {
+	// 启动服务
 	s.start()
+	// 挂载 ticks
 	s.GoAttach(func() { s.adjustTicks() })
+	// 挂载 请求超时
 	s.GoAttach(func() { s.publish(s.Cfg.ReqTimeout()) })
+	// 挂载 文件
 	s.GoAttach(s.purgeFile)
+	// 挂载 监控文件
 	s.GoAttach(func() { monitorFileDescriptor(s.getLogger(), s.stopping) })
+	// 挂载 挂监控版本
 	s.GoAttach(s.monitorVersions)
 	s.GoAttach(s.linearizableReadLoop)
 	s.GoAttach(s.monitorKVHash)
@@ -741,7 +748,7 @@ func (s *EtcdServer) Start() {
 // This function is just used for testing.
 func (s *EtcdServer) start() {
 	lg := s.getLogger()
-
+	// 快照信息
 	if s.Cfg.SnapshotCount == 0 {
 		lg.Info(
 			"updating snapshot-count to default",
@@ -768,6 +775,7 @@ func (s *EtcdServer) start() {
 	s.readwaitc = make(chan struct{}, 1)
 	s.readNotifier = newNotifier()
 	s.leaderChanged = make(chan struct{})
+	// 集群版本有的话 那就刷新成员关系图
 	if s.ClusterVersion() != nil {
 		lg.Info(
 			"starting etcd server",
@@ -847,6 +855,10 @@ type ServerPeerV2 interface {
 	ServerPeer
 	HashKVHandler() http.Handler
 	DowngradeEnabledHandler() http.Handler
+}
+
+func a(a ServerPeerV2)  {
+	a.RaftHandler()
 }
 
 func (s *EtcdServer) DowngradeInfo() *membership.DowngradeInfo { return s.cluster.DowngradeInfo() }
@@ -941,11 +953,13 @@ type raftReadyHandler struct {
 func (s *EtcdServer) run() {
 	lg := s.getLogger()
 
+	// raft 存储快照
 	sn, err := s.r.raftStorage.Snapshot()
 	if err != nil {
 		lg.Panic("failed to get snapshot from Raft storage", zap.Error(err))
 	}
 
+	// 创建处理队列---> 有后台线程的
 	// asynchronously accept apply packets, dispatch progress in-order
 	sched := schedule.NewFIFOScheduler()
 
@@ -964,6 +978,7 @@ func (s *EtcdServer) run() {
 		smu.RUnlock()
 		return
 	}
+	// raft 准备阶段 handler 处理器
 	rh := &raftReadyHandler{
 		getLead:    func() (lead uint64) { return s.getLead() },
 		updateLead: func(lead uint64) { s.setLead(lead) },
@@ -1017,6 +1032,7 @@ func (s *EtcdServer) run() {
 		appliedi:  sn.Metadata.Index,
 	}
 
+	// 延迟函数. 用于关闭释放掉当前的资源
 	defer func() {
 		s.wgMu.Lock() // block concurrent waitgroup adds in GoAttach while stopping
 		close(s.stopping)
@@ -1054,6 +1070,7 @@ func (s *EtcdServer) run() {
 		close(s.done)
 	}()
 
+	// 超时处理
 	var expiredLeaseC <-chan []*lease.Lease
 	if s.lessor != nil {
 		expiredLeaseC = s.lessor.ExpiredLeasesC()
@@ -1061,10 +1078,13 @@ func (s *EtcdServer) run() {
 
 	for {
 		select {
+		// raft node apply 准备好了
 		case ap := <-s.r.apply():
 			f := func(context.Context) { s.applyAll(&ep, &ap) }
+			// 挂载后台线程处理 s.applyAll
 			sched.Schedule(f)
 		case leases := <-expiredLeaseC:
+			// 认证过期. 重新获取认证
 			s.GoAttach(func() {
 				// Increases throughput of expired leases deletion process through parallelization
 				c := make(chan struct{}, maxPendingRevokes)
