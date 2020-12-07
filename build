@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
 
+# 测试
 source ./scripts/test_lib.sh
 
+# 查找git信息
 GIT_SHA=$(git rev-parse --short HEAD || echo "GitNotFound")
 if [[ -n "$FAILPOINTS" ]]; then
   GIT_SHA="$GIT_SHA"-FAILPOINTS
 fi
 
+# 构建版本
 VERSION_SYMBOL="go.etcd.io/etcd/api/v3/version.GitSHA"
 
 # Set GO_LDFLAGS="-s" for building without symbols for debugging.
 # shellcheck disable=SC2206
 GO_LDFLAGS=(${GO_LDFLAGS} "-X=${VERSION_SYMBOL}=${GIT_SHA}")
+
+# GO 构建环境
 GO_BUILD_ENV=("CGO_ENABLED=0" "GO_BUILD_FLAGS=${GO_BUILD_FLAGS}" "GOOS=${GOOS}" "GOARCH=${GOARCH}")
 
 # enable/disable failpoints
@@ -31,16 +36,20 @@ toggle_failpoints_default() {
   toggle_failpoints "$mode"
 }
 
+# etcd 构建
 etcd_build() {
   out="bin"
   if [[ -n "${BINDIR}" ]]; then out="${BINDIR}"; fi
+  # 故障测试
   toggle_failpoints_default
 
   run rm -f "${out}/etcd"
   (
+    # 重点查看 server 构建
     cd ./server
     # Static compilation is useful when etcd is run in a container. $GO_BUILD_FLAGS is OK
     # shellcheck disable=SC2086
+    # 构建etcd-server
     run env "${GO_BUILD_ENV[@]}" go build $GO_BUILD_FLAGS \
       -installsuffix=cgo \
       "-ldflags=${GO_LDFLAGS[*]}" \
@@ -51,6 +60,7 @@ etcd_build() {
   # shellcheck disable=SC2086
   (
     cd ./etcdctl
+    # 构建etcdctl
     run env CGO_ENABLED=0 GO_BUILD_FLAGS="${GO_BUILD_FLAGS}" go build $GO_BUILD_FLAGS \
       -installsuffix=cgo \
       "-ldflags=${GO_LDFLAGS[*]}" \
@@ -112,10 +122,12 @@ tests_build() {
   ) || return 2
 }
 
+# 故障测试
 toggle_failpoints_default
 
 # only build when called directly, not sourced
 if echo "$0" | grep "build$" >/dev/null; then
+  # 开始构建
   if etcd_build; then
     log_success "SUCCESS: etcd_build"
   else
