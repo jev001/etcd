@@ -288,6 +288,7 @@ type EtcdServer struct {
 func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 	st := v2store.New(StoreClusterPrefix, StoreKeysPrefix)
 
+	// 空参数
 	var (
 		w  *wal.WAL
 		n  raft.Node
@@ -296,6 +297,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 		cl *membership.RaftCluster
 	)
 
+	// 初始化 etcd 服务配置 . 最大请求内容
 	if cfg.MaxRequestBytes > recommendedMaxRequestBytes {
 		cfg.Logger.Warn(
 			"exceeded recommended request limit",
@@ -306,12 +308,15 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 		)
 	}
 
+	// 创建数据目录
 	if terr := fileutil.TouchDirAll(cfg.DataDir); terr != nil {
 		return nil, fmt.Errorf("cannot access data directory: %v", terr)
 	}
 
+	// 是否存在 wal 目录**重要. wal目录用于追加数据
 	haveWAL := wal.Exist(cfg.WALDir())
 
+	// 创建 快照目录. 用于回滚？有wal 还需要回滚？
 	if err = fileutil.TouchDirAll(cfg.SnapDir()); err != nil {
 		cfg.Logger.Fatal(
 			"failed to create snapshot directory",
@@ -319,6 +324,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 			zap.Error(err),
 		)
 	}
+	// 快照信息
 	ss := snap.New(cfg.Logger, cfg.SnapDir())
 
 	bepath := cfg.backendPath()
@@ -340,11 +346,15 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 		snapshot *raftpb.Snapshot
 	)
 
+	// 对上面数据进行判断
 	switch {
 	case !haveWAL && !cfg.NewCluster:
+
+		// 如果没有wal 又不是新集群成员, 那么校验当前的数据. 然后加入进去
 		if err = cfg.VerifyJoinExisting(); err != nil {
 			return nil, err
 		}
+		// 创建集群成员
 		cl, err = membership.NewClusterFromURLsMap(cfg.Logger, cfg.InitialClusterToken, cfg.InitialPeerURLsMap)
 		if err != nil {
 			return nil, err
@@ -353,13 +363,15 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 		if gerr != nil {
 			return nil, fmt.Errorf("cannot fetch cluster info from peer urls: %v", gerr)
 		}
+		// 校验集群. 获取 集群节点的ids
 		if err = membership.ValidateClusterAndAssignIDs(cfg.Logger, cl, existingCluster); err != nil {
 			return nil, fmt.Errorf("error validating peerURLs %s: %v", existingCluster, err)
 		}
+		// 是否压缩集群？
 		if !isCompatibleWithCluster(cfg.Logger, cl, cl.MemberByName(cfg.Name).ID, prt) {
 			return nil, fmt.Errorf("incompatible with current running cluster")
 		}
-
+		// 将集群成员记录下来
 		remotes = existingCluster.Members()
 		cl.SetID(types.ID(0), existingCluster.ID())
 		cl.SetStore(st)
@@ -368,6 +380,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 		cl.SetID(id, existingCluster.ID())
 
 	case !haveWAL && cfg.NewCluster:
+		// 如果不存在wal 但是 是new的集群成员. 需要将该节点同步到 ds lookup节点中中
 		if err = cfg.VerifyBootstrap(); err != nil {
 			return nil, err
 		}
@@ -403,6 +416,8 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 		cl.SetID(id, cl.ID())
 
 	case haveWAL:
+		// 如果有 wal 那么就是 已经启动过的
+		// 这个个时候检查一下 wal目录读写状态
 		if err = fileutil.IsDirWriteable(cfg.MemberDir()); err != nil {
 			return nil, fmt.Errorf("cannot write to member directory: %v", err)
 		}
@@ -418,6 +433,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 			)
 		}
 
+		// wal快照 校验
 		// Find a snapshot to start/restart a raft node
 		walSnaps, err := wal.ValidSnapshotEntries(cfg.Logger, cfg.WALDir())
 		if err != nil {
@@ -425,6 +441,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 		}
 		// snapshot files can be orphaned if etcd crashes after writing them but before writing the corresponding
 		// wal log entries
+		// wal 加载快照
 		snapshot, err := ss.LoadNewestAvailable(walSnaps)
 		if err != nil && err != snap.ErrNoSnapshot {
 			return nil, err
@@ -476,9 +493,12 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 		return nil, fmt.Errorf("cannot access member directory: %v", terr)
 	}
 
+	// 获取该服务服务器的状态
+	// 获取该服务Leader的状态
 	sstats := stats.NewServerStats(cfg.Name, id.String())
 	lstats := stats.NewLeaderStats(cfg.Logger, id.String())
 
+	// 心跳链接 raft 心跳
 	heartbeat := time.Duration(cfg.TickMs) * time.Millisecond
 	srv = &EtcdServer{
 		readych:     make(chan struct{}),
@@ -515,6 +535,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 	srv.applyV2 = NewApplierV2(cfg.Logger, srv.v2store, srv.cluster)
 
 	srv.be = be
+	// 需要参考 raft 实现 为什么需要 这么计算出  minTTL
 	minTTL := time.Duration((3*cfg.ElectionTicks)/2) * heartbeat
 
 	// always recover lessor before kv. When we recover the mvcc.KV it will reattach keys to its leases.
@@ -568,6 +589,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 			newSrv.kv.Close()
 		}
 	}()
+	// 自动压缩数据
 	if num := cfg.AutoCompactionRetention; num != 0 {
 		srv.compactor, err = v3compactor.New(cfg.Logger, cfg.AutoCompactionMode, num, srv.kv, srv)
 		if err != nil {
@@ -576,6 +598,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 		srv.compactor.Run()
 	}
 
+	// v3接口版本
 	srv.applyV3Base = srv.newApplierV3Backend()
 	srv.applyV3Internal = srv.newApplierV3Internal()
 	if err = srv.restoreAlarms(); err != nil {
@@ -588,7 +611,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 			srv.raftRequestOnce(ctx, pb.InternalRaftRequest{LeaseCheckpoint: cp})
 		})
 	}
-
+	// 初始化 raft 传输 通道
 	// TODO: move transport initialization near the definition of remote
 	tr := &rafthttp.Transport{
 		Logger:      cfg.Logger,
@@ -603,10 +626,12 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 		LeaderStats: lstats,
 		ErrorC:      srv.errorc,
 	}
+	//  raft 传输 通道 开启
 	if err = tr.Start(); err != nil {
 		return nil, err
 	}
 	// add all remotes into transport
+	// 将集群中的节点全部加载到 raft 传输列表汇总
 	for _, m := range remotes {
 		if m.ID != id {
 			tr.AddRemote(m.ID, m.PeerURLs)

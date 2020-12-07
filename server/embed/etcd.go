@@ -93,13 +93,16 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 	if err = inCfg.Validate(); err != nil {
 		return nil, err
 	}
+	// 启动状态
 	serving := false
 	e = &Etcd{cfg: *inCfg, stopc: make(chan struct{})}
 	cfg := &e.cfg
+	// 延迟方法. 用于关闭服务资源
 	defer func() {
 		if e == nil || err == nil {
 			return
 		}
+		// 检查启动状态
 		if !serving {
 			// errored before starting gRPC server for serveCtx.serversC
 			for _, sctx := range e.sctxs {
@@ -126,6 +129,7 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 		return e, err
 	}
 
+	// 将etcd-client 加入到 配置中
 	for _, sctx := range e.sctxs {
 		e.Clients = append(e.Clients, sctx.l)
 	}
@@ -134,26 +138,33 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 		urlsmap types.URLsMap
 		token   string
 	)
+	// 成员初始化状态监测
 	memberInitialized := true
+	// 查看所有的成员是否已经初始化完成? 内部监测 wal文件
 	if !isMemberInitialized(cfg) {
 		memberInitialized = false
+		// 获取 请求映射
 		urlsmap, token, err = cfg.PeerURLsMapAndToken("etcd")
 		if err != nil {
 			return e, fmt.Errorf("error setting up initial cluster: %v", err)
 		}
 	}
 
+	// 是否自动压缩
 	// AutoCompactionRetention defaults to "0" if not set.
 	if len(cfg.AutoCompactionRetention) == 0 {
 		cfg.AutoCompactionRetention = "0"
 	}
+	// 格式化压缩存储配置
 	autoCompactionRetention, err := parseCompactionRetention(cfg.AutoCompactionMode, cfg.AutoCompactionRetention)
 	if err != nil {
 		return e, err
 	}
 
+	// 格式化后??? 类型
 	backendFreelistType := parseBackendFreelistType(cfg.BackendFreelistType)
 
+	// 服务配置
 	srvcfg := etcdserver.ServerConfig{
 		Name:                        cfg.Name,
 		ClientURLs:                  cfg.ACUrls,
@@ -204,10 +215,12 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 		DowngradeCheckTime:          cfg.ExperimentalDowngradeCheckTime,
 		WarningApplyDuration:        cfg.ExperimentalWarningApplyDuration,
 	}
+	// etcd ************开始和 etcd 服务端有关了
 	print(e.cfg.logger, *cfg, srvcfg, memberInitialized)
 	if e.Server, err = etcdserver.NewServer(srvcfg); err != nil {
 		return e, err
 	}
+
 
 	// buffer channel so goroutines on closed connections won't wait forever
 	e.errc = make(chan error, len(e.Peers)+len(e.Clients)+2*len(e.sctxs))
@@ -215,6 +228,7 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 	// newly started member ("memberInitialized==false")
 	// does not need corruption check
 	if memberInitialized {
+		// 确认是否初始化 hashKV
 		if err = e.Server.CheckInitialHashKV(); err != nil {
 			// set "EtcdServer" to nil, so that it does not block on "EtcdServer.Close()"
 			// (nothing to close since rafthttp transports have not been started)
@@ -222,7 +236,10 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 			return e, err
 		}
 	}
+	// 启动服务
 	e.Server.Start()
+
+	// 启动后检查服务 信息配置
 
 	if err = e.servePeers(); err != nil {
 		return e, err
@@ -243,6 +260,7 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 		zap.Strings("listen-client-urls", e.cfg.getLCURLs()),
 		zap.Strings("listen-metrics-urls", e.cfg.getMetricsURLs()),
 	)
+	// 将服务启动标志位 已经启动
 	serving = true
 	return e, nil
 }
@@ -317,6 +335,7 @@ func (e *Etcd) Config() Config {
 // Close gracefully shuts down all servers/listeners.
 // Client requests will be terminated with request timeout.
 // After timeout, enforce remaning requests be closed immediately.
+// 关闭IO时候的中断处理
 func (e *Etcd) Close() {
 	fields := []zap.Field{
 		zap.String("name", e.cfg.Name),
