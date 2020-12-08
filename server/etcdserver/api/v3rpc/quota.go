@@ -49,6 +49,7 @@ func (qa *quotaAlarmer) check(ctx context.Context, r interface{}) error {
 	return rpctypes.ErrGRPCNoSpace
 }
 
+// 创建投票服务器
 func NewQuotaKVServer(s *etcdserver.EtcdServer) pb.KVServer {
 	return &quotaKVServer{
 		NewKVServer(s),

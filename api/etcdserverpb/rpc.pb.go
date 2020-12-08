@@ -6578,6 +6578,7 @@ func _KV_Put_Handler(srv interface{}, ctx context.Context, dec func(interface{})
 		FullMethod: "/etcdserverpb.KV/Put",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		// 内部实现是 quotaAlarmer 是 kvServer实现类
 		return srv.(KVServer).Put(ctx, req.(*PutRequest))
 	}
 	return interceptor(ctx, in, info, handler)
@@ -6637,7 +6638,10 @@ func _KV_Compact_Handler(srv interface{}, ctx context.Context, dec func(interfac
 	return interceptor(ctx, in, info, handler)
 }
 
+// 暴露服务接口
 var _KV_serviceDesc = grpc.ServiceDesc{
+	// 服务名称 http://127.0.0.1:2380/etcdserverpb.KV
+	// 下方是对应的子路径 http://127.0.0.1:2380/etcdserverpb.KV/put
 	ServiceName: "etcdserverpb.KV",
 	HandlerType: (*KVServer)(nil),
 	Methods: []grpc.MethodDesc{

@@ -33,6 +33,7 @@ func (s *kvs2kvc) Range(ctx context.Context, in *pb.RangeRequest, opts ...grpc.C
 }
 
 func (s *kvs2kvc) Put(ctx context.Context, in *pb.PutRequest, opts ...grpc.CallOption) (*pb.PutResponse, error) {
+	// kvServer 使用
 	return s.kvs.Put(ctx, in)
 }
 

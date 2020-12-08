@@ -217,6 +217,7 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 	}
 	// etcd ************开始和 etcd 服务端有关了
 	print(e.cfg.logger, *cfg, srvcfg, memberInitialized)
+	// 创建安etcdserver 实例===> 关键. 这个 etcdserver 是和 客户端接口交互用的. 并且 改server内实现了raft 的交互
 	if e.Server, err = etcdserver.NewServer(srvcfg); err != nil {
 		return e, err
 	}
@@ -244,6 +245,8 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 	if err = e.servePeers(); err != nil {
 		return e, err
 	}
+
+	// 启动服务器客户端处理
 	if err = e.serveClients(); err != nil {
 		return e, err
 	}

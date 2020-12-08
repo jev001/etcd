@@ -34,6 +34,7 @@ type kvServer struct {
 	maxTxnOps uint
 }
 
+// 创建KV 键值服务器 ====> 创建 指令服务器
 func NewKVServer(s *etcdserver.EtcdServer) pb.KVServer {
 	return &kvServer{hdr: newHeader(s), kv: s, maxTxnOps: s.Cfg.MaxTxnOps}
 }
@@ -52,11 +53,13 @@ func (s *kvServer) Range(ctx context.Context, r *pb.RangeRequest) (*pb.RangeResp
 	return resp, nil
 }
 
+// kv服务
 func (s *kvServer) Put(ctx context.Context, r *pb.PutRequest) (*pb.PutResponse, error) {
 	if err := checkPutRequest(r); err != nil {
 		return nil, err
 	}
 
+	// etcdServer 装载
 	resp, err := s.kv.Put(ctx, r)
 	if err != nil {
 		return nil, togRPCError(err)
